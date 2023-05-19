@@ -2,6 +2,7 @@
 
 use core::slice;
 
+use soroban_wasmi as wasmi;
 use assert_matches::assert_matches;
 use wasmi::{
     errors::{ErrorKind, FuncError},

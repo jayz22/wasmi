@@ -1,5 +1,6 @@
 //! Tests to check if wasmi's fuel metering works as intended.
 
+use soroban_wasmi as wasmi;
 use std::fmt::Debug;
 use wasmi::{core::TrapCode, Config, Engine, Error, Func, Linker, Module, Store};
 

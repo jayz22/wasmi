@@ -1,339 +1,58 @@
-name: Rust - Continuous Integration
+name: Rust
 
 on:
   push:
-    branches: [master]
   pull_request:
-    branches: [master]
 
-# disable running jobs on earlier commits
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+env:
+  RUSTFLAGS: -D warnings
 
 jobs:
-  check:
-    name: Build
+
+  complete:
+    if: always()
+    needs: [rust-analyzer-compat, build-and-test, publish-dry-run]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown, thumbv7em-none-eabi
-      - name: Set up Cargo cache
-        uses: actions/cache@v3
-        continue-on-error: false
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/target/
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-build-
-      - name: Build (default features)
-        run: cargo build --workspace
-      - name: Build (all features)
-        run: cargo build --workspace --all-features
-      - name: Build (no_std)
-        run: cargo build --workspace --lib --no-default-features --target thumbv7em-none-eabi --exclude wasmi_cli --exclude wasmi_wasi
-      - name: Build (wasm32)
-        run: cargo build --workspace --lib --no-default-features --target wasm32-unknown-unknown --exclude wasmi_cli --exclude wasmi_wasi
+    - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+      run: exit 1
 
-  test:
-    name: Test
+  rust-analyzer-compat:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - run: rustup update
+    - run: rustup +nightly component add rust-analyzer
+    - name: Check if rust-analyzer encounters any errors parsing project
+      run: rustup run nightly rust-analyzer analysis-stats . 2>&1 | (! grep ERROR)
+
+  build-and-test:
     strategy:
       matrix:
-        # windows-latest was pinned to windows-2019
-        # because of https://github.com/paritytech/wasmi/runs/5021520759
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        sys:
+        - os: ubuntu-latest
+          target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.sys.os }}
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Set up Cargo cache
-        uses: actions/cache@v3
-        continue-on-error: false
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/target/
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-test-
-      - name: Checkout Submodules
-        run: git submodule update --init --recursive
-      - name: Test (default features)
-        env:
-          RUSTFLAGS: "--cfg debug_assertions"
-        run: cargo test --workspace --release
-      - name: Test (all features)
-        env:
-          RUSTFLAGS: "--cfg debug_assertions"
-        run: cargo test --workspace --release --all-features
+    - uses: actions/checkout@v3
+    - uses: stellar/actions/rust-cache@main
+    - run: rustup update
+    - run: rustup target add ${{ matrix.sys.target }}
+    - run: cargo install --target-dir ~/.cargo/target --locked --version 0.5.16 cargo-hack
+    - run: git submodule update --init --recursive
+    - run: cargo hack build --target ${{ matrix.sys.target }}
+    - run: cargo hack test --target ${{ matrix.sys.target }}
 
-  fmt:
-    name: Formatting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rustfmt
-      - name: Foramtting
-        run: cargo fmt --all -- --check
-
-  doc:
-    name: Documentation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rust-docs, rust-src
-      - name: Set up Cargo cache
-        uses: actions/cache@v3
-        continue-on-error: false
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/target/
-          key: ${{ runner.os }}-cargo-doc-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-doc-
-      - name: Check Docs
-        env:
-          RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --workspace --all-features --no-deps --document-private-items
-
-  audit:
-    name: Audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install cargo-audit
-        run: |
-          # Note: We use `|| true` because cargo install returns an error
-          #       if cargo-audit was already installed on the CI runner.
-          cargo install cargo-audit || true
-      - name: Check Audit
-        run: cargo audit
-
-  udeps:
-    name: uDeps
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-      - uses: dtolnay/rust-toolchain@nightly
-      - name: Set up Cargo cache
-        uses: actions/cache@v3
-        continue-on-error: false
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/target/
-          key: ${{ runner.os }}-cargo-udeps-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-udeps-
-      - name: Checkout Submodules
-        run: git submodule update --init --recursive
-      - name: Install cargo-udeps
-        run: |
-          # Note: We use `|| true` because cargo install returns an error
-          #       if cargo-udeps was already installed on the CI runner.
-          cargo install --locked cargo-udeps || true
-      - name: Check uDeps
-        run: cargo udeps --all-targets
-
-  fuzz_translate:
-    name: Fuzz (Translation)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-      - uses: dtolnay/rust-toolchain@nightly
-      - name: Set up Cargo cache
-        uses: actions/cache@v3
-        continue-on-error: false
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/target/
-            ~/fuzz/target/
-            ~/fuzz/corpus/translate/
-            ~/fuzz/curpus/translate_metered/
-          key: ${{ runner.os }}-cargo-fuzz-translation-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-fuzz-translation-
-      - name: Checkout Submodules
-        run: git submodule update --init --recursive
-      - name: Install cargo-fuzz
-        run: |
-          # Note: We use `|| true` because cargo install returns an error
-          #       if cargo-udeps was already installed on the CI runner.
-          cargo install cargo-fuzz || true
-      - name: Fuzz (Translation)
-        run: cargo fuzz run translate -j 2 --verbose -- -max_total_time=60 # 1 minute of fuzzing
-      - name: Fuzz (Translation) + fuel
-        run: cargo fuzz run translate_metered -j 2 --verbose -- -max_total_time=60 # 1 minute of fuzzing
-
-  fuzz_execute:
-    name: Fuzz (Execution)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-      - uses: dtolnay/rust-toolchain@nightly
-      - name: Set up Cargo cache
-        uses: actions/cache@v3
-        continue-on-error: false
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/target/
-            ~/fuzz/target/
-            ~/fuzz/corpus/execute/
-          key: ${{ runner.os }}-cargo-fuzz-execution-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-fuzz-execution-
-      - name: Checkout Submodules
-        run: git submodule update --init --recursive
-      - name: Install cargo-fuzz
-        run: |
-          # Note: We use `|| true` because cargo install returns an error
-          #       if cargo-udeps was already installed on the CI runner.
-          cargo install cargo-fuzz || true
-      - name: Fuzz (Execution)
-        run: cargo fuzz run execute -j 2 --verbose -- -max_total_time=120 # 2 minutes of fuzzing
-
-  fuzz_differential:
-    name: Fuzz (Differential)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-      - uses: dtolnay/rust-toolchain@nightly
-      - name: Set up Cargo cache
-        uses: actions/cache@v3
-        continue-on-error: false
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/target/
-            ~/fuzz/target/
-            ~/fuzz/corpus/execute/
-          key: ${{ runner.os }}-cargo-fuzz-differential-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-fuzz-differential-
-      - name: Checkout Submodules
-        run: git submodule update --init --recursive
-      - name: Install cargo-fuzz
-        run: |
-          # Note: We use `|| true` because cargo install returns an error
-          #       if cargo-udeps was already installed on the CI runner.
-          cargo install cargo-fuzz || true
-      - name: Fuzz (Differential)
-        run: cargo fuzz run differential -j 2 --verbose -- -max_total_time=120 # 2 minutes of fuzzing
-
-  miri:
-    name: Miri
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: miri
-      - name: Set up Cargo cache
-        uses: actions/cache@v3
-        continue-on-error: false
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/target/
-          key: ${{ runner.os }}-cargo-miri-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-miri-
-      - name: Miri (--lib)
-        run: cargo miri test --lib --workspace
-      - name: Miri (--doc)
-        run: cargo miri test --doc --workspace
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: clippy
-      - name: Set up Cargo cache
-        uses: actions/cache@v3
-        continue-on-error: false
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/target/
-          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-clippy-
-      - name: Clippy (default features)
-        run: cargo clippy --workspace -- -D warnings
-      - name: Clippy (all features)
-        run: cargo clippy --workspace --all-features -- -D warnings
-      - name: Clippy (no_std)
-        run: cargo clippy --workspace --no-default-features -- -D warnings
-      - name: Clippy (tests)
-        run: cargo clippy --workspace --tests -- -D warnings
-
-  coverage:
-    name: Coverage
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-        with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Set up Cargo cache
-        uses: actions/cache@v3
-        continue-on-error: false
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/target/
-          key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-coverage-
-      - name: Checkout Submodules
-        run: git submodule update --init --recursive
-      - name: Run cargo-tarpaulin (default features)
-        uses: actions-rs/tarpaulin@v0.1.3
-        with:
-          version: "0.18.0"
-          args: --workspace
-      - name: Upload to codecov.io
-        uses: codecov/codecov-action@v3.1.4
-        with:
-          token: ${{secrets.CODECOV_TOKEN}}
-      - name: Archive code coverage results
-        uses: actions/upload-artifact@v4
-        with:
-          name: code-coverage-report
-          path: cobertura.xml
+  publish-dry-run:
+    if: startsWith(github.head_ref, 'release/')
+    strategy:
+      matrix:
+        sys:
+        - os: ubuntu-latest
+          target: x86_64-unknown-linux-gnu
+          cargo-hack-feature-options: ''
+    uses: stellar/actions/.github/workflows/rust-publish-dry-run.yml@main
+    with:
+      runs-on: ${{ matrix.sys.os }}
+      cargo-hack-feature-options: ${{ matrix.sys.cargo-hack-feature-options }}
+      target: ${{ matrix.sys.target }}
