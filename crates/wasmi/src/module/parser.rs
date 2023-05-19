@@ -16,6 +16,7 @@ use alloc::{boxed::Box, vec::Vec};
 use core::ops::Range;
 use wasmparser::{
     Chunk,
+    CustomSectionReader,
     DataSectionReader,
     ElementSectionReader,
     Encoding,
@@ -201,7 +202,9 @@ impl ModuleParser {
                         }
                         Payload::DataSection(_) => break,
                         Payload::End(_) => break,
-                        Payload::CustomSection { .. } => Ok(()),
+                        Payload::CustomSection(section)  => {
+                            self.process_custom_section(section, &mut header)
+                        },
                         Payload::UnknownSection { id, range, .. } => {
                             self.process_unknown(id, range)
                         }
@@ -596,6 +599,15 @@ impl ModuleParser {
             .into_iter()
             .map(|segment| segment.map(DataSegment::from).map_err(Error::from));
         builder.push_data_segments(segments)?;
+        Ok(())
+    }
+
+    fn process_custom_section(
+        &mut self, 
+        section: CustomSectionReader, 
+        header: &mut ModuleHeaderBuilder
+    ) -> Result<(), Error> {
+        header.push_custom_section(section.name(), section.data());
         Ok(())
     }
 

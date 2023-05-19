@@ -44,6 +44,12 @@ use alloc::{boxed::Box, collections::BTreeMap, sync::Arc};
 use core::{iter, slice::Iter as SliceIter};
 use wasmparser::{FuncValidatorAllocations, Parser, ValidPayload, Validator};
 
+#[derive(Debug)]
+pub struct CustomSection {
+    pub name: Box<str>,
+    pub data: Box<[u8]>,
+}
+
 /// A parsed and validated WebAssembly module.
 #[derive(Debug)]
 pub struct Module {
@@ -73,6 +79,7 @@ struct ModuleHeaderInner {
     compiled_funcs: Box<[CompiledFunc]>,
     compiled_funcs_idx: BTreeMap<CompiledFunc, FuncIdx>,
     element_segments: Box<[ElementSegment]>,
+    custom_sections: Box<[CustomSection]>,
 }
 
 impl ModuleHeader {
@@ -360,6 +367,10 @@ impl Module {
     /// Returns an iterator over the exports of the [`Module`].
     pub fn exports(&self) -> ModuleExportsIter {
         ModuleExportsIter::new(self)
+    }
+
+    pub fn custom_sections(&self) -> &[CustomSection] {
+        &self.header.inner.custom_sections
     }
 
     /// Looks up an export in this [`Module`] by its `name`.
