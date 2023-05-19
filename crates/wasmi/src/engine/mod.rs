@@ -21,7 +21,6 @@ use self::bytecode::RegisterSpan;
 
 pub(crate) use self::{
     block_type::BlockType,
-    config::FuelCosts,
     executor::Stack,
     func_args::{FuncFinished, FuncParams, FuncResults},
     func_types::DedupFuncType,
@@ -36,7 +35,7 @@ pub(crate) use self::{
 };
 pub use self::{
     code_map::CompiledFunc,
-    config::{CompilationMode, Config, FuelConsumptionMode},
+    config::{CompilationMode, Config, FuelConsumptionMode, FuelCosts},
     limits::StackLimits,
     resumable::{ResumableCall, ResumableInvocation, TypedResumableCall, TypedResumableInvocation},
     traits::{CallParams, CallResults},
