@@ -619,6 +619,22 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         }
     }
 
+    #[inline(always)]
+    fn consume_mem_fuel_with<T, E>(
+        &mut self,
+        bytes: u64,
+        delta: impl FnOnce(&FuelCosts) -> u64,
+        exec: impl FnOnce(&mut Self) -> Result<T, E>,
+    ) -> Result<T, E>
+    where
+        E: From<TrapCode>,
+    {
+        match self.get_fuel_consumption_mode() {
+            None => exec(self),
+            Some(mode) => self.consume_mem_fuel_with_mode(bytes, mode, delta, exec),
+        }
+    }
+
     /// Consume an amount of fuel specified by `delta` and executes `exec`.
     ///
     /// The `mode` determines when and if the fuel determined by `delta` is charged.
@@ -637,6 +653,25 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     where
         E: From<TrapCode>,
     {
+        let delta = delta(self.fuel_costs());
+        match mode {
+            FuelConsumptionMode::Lazy => self.consume_fuel_with_lazy(delta, exec),
+            FuelConsumptionMode::Eager => self.consume_fuel_with_eager(delta, exec),
+        }
+    }
+
+    #[inline(always)]
+    fn consume_mem_fuel_with_mode<T, E>(
+        &mut self,
+        bytes: u64,
+        mode: FuelConsumptionMode,
+        delta: impl FnOnce(&FuelCosts) -> u64,
+        exec: impl FnOnce(&mut Self) -> Result<T, E>,
+    ) -> Result<T, E>
+    where
+        E: From<TrapCode>,
+    {
+        self.ctx.mem_fuel_mut().consume_fuel(bytes)?;
         let delta = delta(self.fuel_costs());
         match mode {
             FuelConsumptionMode::Lazy => self.consume_fuel_with_lazy(delta, exec),
@@ -934,9 +969,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 return self.try_next_instr();
             }
         };
-        let result = self.consume_fuel_with(
+        let delta_in_bytes = delta.to_bytes().unwrap_or(0) as u64;
+        let result = self.consume_mem_fuel_with(
+            delta_in_bytes,
             |costs| {
-                let delta_in_bytes = delta.to_bytes().unwrap_or(0) as u64;
                 costs.fuel_for_bytes(delta_in_bytes)
             },
             |this| {
