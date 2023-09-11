@@ -1,4 +1,4 @@
-# soroban-wasmi
+# soroban-wasmi 
 
 This is a fork of https://github.com/paritytech/wasmi with a small set of local
 patches applied for customizing interaction with https://soroban.stellar.org
