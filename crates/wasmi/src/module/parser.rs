@@ -130,9 +130,10 @@ impl ModuleParser {
     ) -> Result<Module, Error> {
         let mut buffer = Vec::new();
         let header = Self::parse_header(&mut self, &mut stream, &mut buffer)?;
-        let builder =
+        let mut builder =
             Self::parse_code(&mut self, validation_mode, &mut stream, &mut buffer, header)?;
-        let module = Self::parse_data(&mut self, &mut stream, &mut buffer, builder)?;
+        builder = Self::parse_data(&mut self, &mut stream, &mut buffer, builder)?;
+        let module = Self::parse_custom_section(&mut self, &mut stream, &mut buffer, builder)?;
         Ok(module)
     }
 
@@ -202,9 +203,7 @@ impl ModuleParser {
                         }
                         Payload::DataSection(_) => break,
                         Payload::End(_) => break,
-                        Payload::CustomSection(section)  => {
-                            self.process_custom_section(section, &mut header)
-                        },
+                        Payload::CustomSection { .. } => break,
                         Payload::UnknownSection { id, range, .. } => {
                             self.process_unknown(id, range)
                         }
@@ -253,7 +252,6 @@ impl ModuleParser {
                             let bytes = &buffer[start..consumed];
                             self.process_code_entry(func_body, validation_mode, bytes, &header)?;
                         }
-                        Payload::CustomSection { .. } => {}
                         Payload::UnknownSection { id, range, .. } => {
                             self.process_unknown(id, range)?
                         }
@@ -272,7 +270,7 @@ impl ModuleParser {
         stream: &mut impl Read,
         buffer: &mut Vec<u8>,
         mut builder: ModuleBuilder,
-    ) -> Result<Module, Error> {
+    ) -> Result<ModuleBuilder, Error> {
         loop {
             match self.parser.parse(&buffer[..], self.eof)? {
                 Chunk::NeedMoreData(hint) => {
@@ -283,12 +281,8 @@ impl ModuleParser {
                         Payload::DataSection(section) => {
                             self.process_data(section, &mut builder)?;
                         }
-                        Payload::End(offset) => {
-                            self.process_end(offset)?;
-                            buffer.drain(..consumed);
-                            break;
-                        }
-                        Payload::CustomSection { .. } => {}
+                        Payload::End { .. } => break,
+                        Payload::CustomSection { .. } => break,
                         Payload::UnknownSection { id, range, .. } => {
                             self.process_unknown(id, range)?
                         }
@@ -301,7 +295,43 @@ impl ModuleParser {
                 }
             }
         }
-        Ok(builder.finish(&self.engine))
+        Ok(builder)
+    }
+
+    fn parse_custom_section(
+        &mut self,
+        stream: &mut impl Read,
+        buffer: &mut Vec<u8>,
+        mut builder: ModuleBuilder,
+    ) -> Result<Module, Error> {
+        loop {
+            match self.parser.parse(&buffer[..], self.eof)? {
+                Chunk::NeedMoreData(hint) => {
+                    self.eof = Self::pull_bytes(buffer, hint, stream)?;
+                }
+                Chunk::Parsed { consumed, payload } => {
+                    match payload {
+                        Payload::End(offset) => {
+                            self.process_end(offset)?;
+                            buffer.drain(..consumed);
+                            break;
+                        }
+                        Payload::CustomSection(section)  => {
+                            self.process_custom_section(section, &mut builder)?
+                        }
+                        Payload::UnknownSection { id, range, .. } => {
+                            self.process_unknown(id, range)?
+                        }
+                        unexpected => {
+                            unreachable!("encountered unexpected Wasm section: {unexpected:?}")
+                        }
+                    }
+                    // Cut away the parts from the intermediate buffer that have already been parsed.
+                    buffer.drain(..consumed);
+                }
+            }
+        }
+        Ok(builder.finish(&self.engine))        
     }
 
     /// Pulls more bytes from the `stream` in order to produce Wasm payload.
@@ -605,9 +635,9 @@ impl ModuleParser {
     fn process_custom_section(
         &mut self, 
         section: CustomSectionReader, 
-        header: &mut ModuleHeaderBuilder
+        builder: &mut ModuleBuilder
     ) -> Result<(), Error> {
-        header.push_custom_section(section.name(), section.data());
+        builder.push_custom_section(section.name(), section.data());
         Ok(())
     }
 

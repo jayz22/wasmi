@@ -56,6 +56,7 @@ pub struct Module {
     engine: Engine,
     header: ModuleHeader,
     data_segments: Box<[DataSegment]>,
+    custom_sections: Box<[CustomSection]>,
 }
 
 /// A parsed and validated WebAssembly module header.
@@ -79,7 +80,6 @@ struct ModuleHeaderInner {
     compiled_funcs: Box<[CompiledFunc]>,
     compiled_funcs_idx: BTreeMap<CompiledFunc, FuncIdx>,
     element_segments: Box<[ElementSegment]>,
-    custom_sections: Box<[CustomSection]>,
 }
 
 impl ModuleHeader {
@@ -370,7 +370,7 @@ impl Module {
     }
 
     pub fn custom_sections(&self) -> &[CustomSection] {
-        &self.header.inner.custom_sections
+        &self.custom_sections
     }
 
     /// Looks up an export in this [`Module`] by its `name`.

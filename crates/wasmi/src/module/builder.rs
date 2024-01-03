@@ -32,6 +32,7 @@ use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
 pub struct ModuleBuilder {
     pub header: ModuleHeader,
     pub data_segments: Vec<DataSegment>,
+    pub custom_sections: Vec<CustomSection>,
 }
 
 /// A builder for a WebAssembly [`Module`] header.
@@ -50,7 +51,6 @@ pub struct ModuleHeaderBuilder {
     pub compiled_funcs: Vec<CompiledFunc>,
     pub compiled_funcs_idx: BTreeMap<CompiledFunc, FuncIdx>,
     pub element_segments: Vec<ElementSegment>,
-    pub(super) custom_sections: Vec<CustomSection>,
 }
 
 impl ModuleHeaderBuilder {
@@ -70,7 +70,6 @@ impl ModuleHeaderBuilder {
             compiled_funcs: Vec::new(),
             compiled_funcs_idx: BTreeMap::new(),
             element_segments: Vec::new(),
-            custom_sections: Vec::new(),
         }
     }
 
@@ -91,7 +90,6 @@ impl ModuleHeaderBuilder {
                 compiled_funcs: self.compiled_funcs.into(),
                 compiled_funcs_idx: self.compiled_funcs_idx,
                 element_segments: self.element_segments.into(),
-                custom_sections: self.custom_sections.into()
             }),
         }
     }
@@ -138,6 +136,7 @@ impl ModuleBuilder {
         Self {
             header,
             data_segments: Vec::new(),
+            custom_sections: Vec::new(),
         }
     }
 }
@@ -370,12 +369,6 @@ impl ModuleHeaderBuilder {
         self.element_segments = elements.into_iter().collect::<Result<Vec<_>, _>>()?;
         Ok(())
     }
-
-    pub fn push_custom_section(&mut self, name: &str, data: &[u8]) {
-        let name: Box<str> = name.into();
-        let data: Box<[u8]> = data.into();
-        self.custom_sections.push(CustomSection { name, data })
-    }
 }
 
 impl ModuleBuilder {
@@ -400,12 +393,19 @@ impl ModuleBuilder {
         Ok(())
     }
 
+    pub fn push_custom_section(&mut self, name: &str, data: &[u8]) {
+        let name: Box<str> = name.into();
+        let data: Box<[u8]> = data.into();
+        self.custom_sections.push(CustomSection { name, data })
+    }
+
     /// Finishes construction of the WebAssembly [`Module`].
     pub fn finish(self, engine: &Engine) -> Module {
         Module {
             engine: engine.clone(),
             header: self.header,
             data_segments: self.data_segments.into(),
+            custom_sections: self.custom_sections.into(),
         }
     }
 }
