@@ -393,10 +393,8 @@ impl ModuleBuilder {
         Ok(())
     }
 
-    pub fn push_custom_section(&mut self, name: &str, data: &[u8]) {
-        let name: Box<str> = name.into();
-        let data: Box<[u8]> = data.into();
-        self.custom_sections.push(CustomSection { name, data })
+    pub fn push_custom_sections(&mut self, custom_sections: Vec<CustomSection>) {
+        self.custom_sections = custom_sections;
     }
 
     /// Finishes construction of the WebAssembly [`Module`].

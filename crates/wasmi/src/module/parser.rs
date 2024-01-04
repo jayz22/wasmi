@@ -10,6 +10,7 @@ use super::{
     ModuleBuilder,
     ModuleHeader,
     Read,
+    CustomSection
 };
 use crate::{engine::CompiledFunc, Engine, Error, FuncType, MemoryType, TableType};
 use alloc::{boxed::Box, vec::Vec};
@@ -129,12 +130,13 @@ impl ModuleParser {
         mut stream: impl Read,
     ) -> Result<Module, Error> {
         let mut buffer = Vec::new();
-        let header = Self::parse_header(&mut self, &mut stream, &mut buffer)?;
+        let mut custom_sections: Vec<CustomSection> = vec![];
+        let header = Self::parse_header(&mut self, &mut stream, &mut buffer, &mut custom_sections)?;
         let mut builder =
-            Self::parse_code(&mut self, validation_mode, &mut stream, &mut buffer, header)?;
-        builder = Self::parse_data(&mut self, &mut stream, &mut buffer, builder)?;
-        let module = Self::parse_custom_section(&mut self, &mut stream, &mut buffer, builder)?;
-        Ok(module)
+            Self::parse_code(&mut self, validation_mode, &mut stream, &mut buffer, header, &mut custom_sections)?;
+        builder = Self::parse_data(&mut self, &mut stream, &mut buffer, builder, &mut custom_sections)?;
+        builder.push_custom_sections(custom_sections);
+        Ok(builder.finish(&self.engine))
     }
 
     /// Parse the Wasm module header.
@@ -151,6 +153,7 @@ impl ModuleParser {
         &mut self,
         stream: &mut impl Read,
         buffer: &mut Vec<u8>,
+        custom_sections: &mut Vec<CustomSection>
     ) -> Result<ModuleHeader, Error> {
         let mut header = ModuleHeaderBuilder::new(&self.engine);
         loop {
@@ -203,7 +206,9 @@ impl ModuleParser {
                         }
                         Payload::DataSection(_) => break,
                         Payload::End(_) => break,
-                        Payload::CustomSection { .. } => break,
+                        Payload::CustomSection(section) => {
+                            self.process_custom_section(section, custom_sections)
+                        }
                         Payload::UnknownSection { id, range, .. } => {
                             self.process_unknown(id, range)
                         }
@@ -234,6 +239,7 @@ impl ModuleParser {
         stream: &mut impl Read,
         buffer: &mut Vec<u8>,
         header: ModuleHeader,
+        custom_sections: &mut Vec<CustomSection>
     ) -> Result<ModuleBuilder, Error> {
         loop {
             match self.parser.parse(&buffer[..], self.eof)? {
@@ -251,6 +257,9 @@ impl ModuleParser {
                             let start = consumed - remaining;
                             let bytes = &buffer[start..consumed];
                             self.process_code_entry(func_body, validation_mode, bytes, &header)?;
+                        }
+                        Payload::CustomSection(section) => {
+                            self.process_custom_section(section, custom_sections)?
                         }
                         Payload::UnknownSection { id, range, .. } => {
                             self.process_unknown(id, range)?
@@ -270,6 +279,7 @@ impl ModuleParser {
         stream: &mut impl Read,
         buffer: &mut Vec<u8>,
         mut builder: ModuleBuilder,
+        custom_sections: &mut Vec<CustomSection>
     ) -> Result<ModuleBuilder, Error> {
         loop {
             match self.parser.parse(&buffer[..], self.eof)? {
@@ -281,8 +291,14 @@ impl ModuleParser {
                         Payload::DataSection(section) => {
                             self.process_data(section, &mut builder)?;
                         }
-                        Payload::End { .. } => break,
-                        Payload::CustomSection { .. } => break,
+                        Payload::End(offset) => {
+                            self.process_end(offset)?;
+                            buffer.drain(..consumed);
+                            break;
+                        }
+                        Payload::CustomSection(section) => {
+                            self.process_custom_section(section, custom_sections)?
+                        }
                         Payload::UnknownSection { id, range, .. } => {
                             self.process_unknown(id, range)?
                         }
@@ -296,42 +312,6 @@ impl ModuleParser {
             }
         }
         Ok(builder)
-    }
-
-    fn parse_custom_section(
-        &mut self,
-        stream: &mut impl Read,
-        buffer: &mut Vec<u8>,
-        mut builder: ModuleBuilder,
-    ) -> Result<Module, Error> {
-        loop {
-            match self.parser.parse(&buffer[..], self.eof)? {
-                Chunk::NeedMoreData(hint) => {
-                    self.eof = Self::pull_bytes(buffer, hint, stream)?;
-                }
-                Chunk::Parsed { consumed, payload } => {
-                    match payload {
-                        Payload::End(offset) => {
-                            self.process_end(offset)?;
-                            buffer.drain(..consumed);
-                            break;
-                        }
-                        Payload::CustomSection(section)  => {
-                            self.process_custom_section(section, &mut builder)?
-                        }
-                        Payload::UnknownSection { id, range, .. } => {
-                            self.process_unknown(id, range)?
-                        }
-                        unexpected => {
-                            unreachable!("encountered unexpected Wasm section: {unexpected:?}")
-                        }
-                    }
-                    // Cut away the parts from the intermediate buffer that have already been parsed.
-                    buffer.drain(..consumed);
-                }
-            }
-        }
-        Ok(builder.finish(&self.engine))        
     }
 
     /// Pulls more bytes from the `stream` in order to produce Wasm payload.
@@ -635,9 +615,11 @@ impl ModuleParser {
     fn process_custom_section(
         &mut self, 
         section: CustomSectionReader, 
-        builder: &mut ModuleBuilder
+        custom_sections: &mut Vec<CustomSection>
     ) -> Result<(), Error> {
-        builder.push_custom_section(section.name(), section.data());
+        let name: Box<str> = section.name().into();
+        let data: Box<[u8]> = section.data().into();
+        custom_sections.push(CustomSection { name, data });
         Ok(())
     }
 
